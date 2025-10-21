@@ -1,0 +1,155 @@
+import React, { useEffect, useState } from 'react';
+import SideBar from '../Componentes/SideBar'
+import { useNavigate } from 'react-router-dom';
+
+import '../Css/Usuario.css'
+function Usuario(){
+      const [mensaje, setMensaje] = useState('');
+    const [eventos, setEventos] = useState([]);
+    const navigate = useNavigate();
+
+    useEffect(() => {
+    fetch('http://localhost:5000/api/todos-eventos', {
+      method: 'GET',
+      credentials: 'include'
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setMensaje(data.message);
+          cargarEventos();
+        } else {
+          navigate('/');
+        }
+      })
+      .catch((err) => {
+        console.error('Error:', err);
+        navigate('/');
+      });
+      const cargarEventos = () => {
+    fetch('http://localhost:5000/api/todos-eventos', {
+      method: 'GET',
+      credentials: 'include'
+    })
+      .then((res) => res.json())
+      .then((usuariosData) => {
+        if (usuariosData.success) {
+          setEventos(usuariosData.data);
+          console.log(usuariosData)
+        } else {
+          console.error('Error al cargar usuarios:', usuariosData.message);
+        }
+      });
+  };
+    })
+    return(
+        <>
+        <SideBar/>
+            <h2 className="titulo1">Registro Eventos</h2>
+            <table className="tabla_eventos" border="1" cellPadding="5">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre</th>
+              <th>Descripcion</th>
+              <th>Fecha de inicio</th>
+              <th>Hora de inicio</th>
+              <th>Fecha de fin</th>
+              <th>Hora de fin</th>
+            </tr>
+          </thead>
+          </table>
+        <h2 className="text-local">Localidades</h2>
+        <input
+        type="text"
+        placeholder="Nueva localidad"
+        />
+        <button className="boton-agregaradmin">Agregar</button>
+        <table className="tabla_localidad" border="1" cellPadding="5">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre de localidad</th>
+            </tr>
+          </thead>
+          </table>
+        <h2 className="text-local">Artistas</h2>
+            <input
+        type="text"
+        placeholder="Nueva localidad"
+        />
+        <button className="boton-agregaradmin">Agregar</button>
+        <table className="tabla_artista" border="1" cellPadding="5"> 
+        <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombres y apellidos</th>
+              <th>Genero de musica</th>
+              <th>Ciudad natal</th>
+            </tr>
+          </thead>
+          </table>
+        </>
+        
+    )
+}
+export default Usuario;
+
+const express = require('express');
+const bodyParser = require('body-parser');
+const mysql = require('mysql2/promise');
+const app = express();
+const session = require('express-session');
+const path = require('path');
+const cors = require('cors');
+
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true
+}));
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(session({
+  secret: 'clave-ultra-secretaa',
+  resave: false,
+  saveUninitialized: true,
+  cookie: {
+    secure: true,
+    sameSite: 'none'
+  }
+}));
+
+//configuracion base de datos
+const db = {
+  host: 'localhost',
+  user: 'root',
+  password: '',
+  database: 'gestion_eventos'
+};
+const handleDbError = (error, res) => {
+  console.error('Error de base de datos:', error);
+  res.status(500).json({
+    success: false,
+    message: 'Error interno del servidor'
+  });
+};
+
+app.get('/api/todos-eventos', async (req, res) => {
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [eventos] = await connection.execute(`
+      SELECT * FROM eventos
+    `);
+    res.json({ success: true, data: eventos });
+    console.log(eventos)
+  } catch (error) {
+    handleDbError(error, res);  
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+app.listen(5000, () => { });
+
+
+
