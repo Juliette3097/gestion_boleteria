@@ -1,0 +1,978 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+const mysql = require('mysql2/promise');
+const app = express();
+const path = require('path');
+const moment = require('moment');
+const cors = require('cors');
+const session = require('express-session');
+
+app.use(cors({ origin: 'http://localhost:3001', credentials: true }));
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+
+app.use(session({
+  secret: 'miSecreto',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false,
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 24 * 60 * 60 * 1000
+
+  }
+}));
+
+const db = {
+  host: 'localhost',
+  user: 'root',
+  password: '',
+  database: 'manzana'
+};
+
+const handleDbError = (error, res) => {
+  console.error('Error de base de datos:', error);
+  res.status(500).json({
+    success: false,
+    message: 'Error interno del servidor'
+  });
+};
+
+app.post('/api/crear', async (req, res) => {
+  const { Nombre, TipoDocumento, Documento, Telefono, Direccion, Ocupacion, Id_Manzana } = req.body;
+
+  if (!Nombre || !TipoDocumento || !Documento || !Telefono || !Direccion || !Ocupacion || !Id_Manzana) {
+    return res.status(400).json({ success: false, message: 'Datos incompletos' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [rows] = await connection.execute(
+      'SELECT * FROM usuarios WHERE Documento = ? AND TipoDocumento = ?',
+      [Documento, TipoDocumento]
+    );
+
+    if (rows.length > 0) {
+      return res.status(409).json({ success: false, message: 'Usuario ya existe' });
+    }
+
+    await connection.execute(
+      `INSERT INTO usuarios (Nombre, TipoDocumento, Documento, Telefono, Direccion, Ocupacion, Id_Manzana) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [Nombre, TipoDocumento, Documento, Telefono, Direccion, Ocupacion, Id_Manzana]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Usuario registrado exitosamente',
+      data: { Nombre, TipoDocumento, Documento, Telefono, Direccion, Ocupacion, Id_Manzana }
+    });
+
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.post('/api/iniciar', async (req, res) => {
+  const { TipoDocumento, Documento } = req.body;
+
+  if (!TipoDocumento || !Documento) {
+    return res.status(400).json({ success: false, message: 'Tipo de documento y documento son requeridos' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [rows] = await connection.execute(
+      'SELECT * FROM usuarios WHERE TipoDocumento = ? AND Documento = ?',
+      [TipoDocumento, Documento]
+    );
+
+    if (rows.length > 0) {
+      const usuario = rows[0];
+      req.session.usuario = {
+        Id_Usuario: usuario.Id_Usuario,
+        Nombre: usuario.Nombre,
+        Documento: usuario.Documento,
+        Id_Manzana: usuario.Id_Manzana,
+        Rol: usuario.Rol
+      };
+
+      res.status(200).json({
+        success: true,
+        message: 'Inicio de sesión exitoso',
+        data: req.session.usuario
+      });
+    } else {
+      res.status(401).json({ success: false, message: 'Usuario no encontrado' });
+    }
+
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.get('/api/usuarios', (req, res) => {
+  if (req.session.usuario) {
+    res.json({ success: true, data: req.session.usuario });
+  } else {
+    res.status(401).json({ success: false, message: 'No hay sesión activa' });
+  }
+});
+
+app.get('/api/servicios-disponibles', async (req, res) => {
+  const usuario = req.session.usuario;
+
+  if (!usuario) {
+    return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [serviciosData] = await connection.execute(
+      'SELECT servicios.Id_Servicio, servicios.Nombre FROM servicios INNER JOIN manzanas_servicios ON manzanas_servicios.Id_Servicio = servicios.Id_Servicio WHERE manzanas_servicios.Id_Manzana = ?',
+      [usuario.Id_Manzana]
+    );
+    res.json({ success: true, data: serviciosData });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.get('/api/admin', (req, res) => {
+  if (req.session.usuario && req.session.usuario.Rol === 'admin') {
+    res.json({ success: true, message: 'Bienvenido, administrador' });
+  } else {
+    res.status(403).json({ success: false, message: 'Acceso denegado' });
+  }
+});
+
+// obtener los usuarios (administrador)
+app.get('/api/todos-usuarios', async (req, res) => {
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [usuarios] = await connection.execute(`
+      SELECT 
+        usuarios.Id_Usuario, 
+        usuarios.Nombre, 
+        usuarios.Documento, 
+        manzana.Id_Manzana,
+        manzana.Nombre AS Nombre_Manzana
+      FROM usuarios
+      INNER JOIN manzana ON usuarios.Id_Manzana = manzana.Id_Manzana
+    `);
+    res.json({ success: true, data: usuarios });
+    console.log(usuarios)
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Eliminar usuario
+app.delete('/api/eliminar-usuario/:id', async (req, res) => {
+  const { id } = req.params;
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute('DELETE FROM usuarios WHERE Id_Usuario = ?', [id]);
+    res.json({ success: true, message: 'Usuario eliminado' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Editar usuario
+app.put('/api/editar-usuario/:id', async (req, res) => {
+  const { id } = req.params;
+  const { Nombre, Documento, Id_Manzana } = req.body;
+
+  if (!Nombre || !Documento || !Id_Manzana) {
+    return res.status(400).json({ success: false, message: 'Datos incompletos' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute(
+      'UPDATE usuarios SET Nombre = ?, Documento = ?, Id_Manzana = ? WHERE Id_Usuario = ?',
+      [Nombre, Documento, Id_Manzana, id]
+    );
+    res.json({ success: true, message: 'Usuario actualizado' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.get('/api/manzanas', async (req, res) => {
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [manzanas] = await connection.execute('SELECT Id_Manzana, Nombre FROM manzana');
+    res.json({ success: true, data: manzanas });
+  } catch (error) {
+    console.error('Error al obtener manzanas:', error);
+    res.status(500).json({ success: false, message: 'Error al obtener manzanas' });
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Crear manzana
+app.post('/api/manzanas', async (req, res) => {
+  const { Nombre } = req.body;
+
+  if (!Nombre) {
+    return res.status(400).json({ success: false, message: 'Nombre es requerido' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute('INSERT INTO manzana (Nombre) VALUES (?)', [Nombre]);
+    res.json({ success: true, message: 'Manzana creada exitosamente' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Eliminar manzana
+app.delete('/api/manzanas/:id', async (req, res) => {
+  const { id } = req.params;
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute('DELETE FROM manzana WHERE Id_Manzana = ?', [id]);
+    res.json({ success: true, message: 'Manzana eliminada' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Editar manzana
+app.put('/api/manzanas/:id', async (req, res) => {
+  const { id } = req.params;
+  const { Nombre } = req.body;
+
+  if (!Nombre) {
+    return res.status(400).json({ success: false, message: 'Nombre es requerido' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute('UPDATE manzana SET Nombre = ? WHERE Id_Manzana = ?', [Nombre, id]);
+    res.json({ success: true, message: 'Manzana actualizada' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// obtener todos los servicios
+app.get('/api/servicios', async (req, res) => {
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [servicios] = await connection.execute('SELECT Id_Servicio, Nombre FROM servicios');
+    res.json({ success: true, data: servicios });
+  } catch (error) {
+    console.error('Error al obtener servicios:', error);
+    res.status(500).json({ success: false, message: 'Error al obtener servicios' });
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Crear servicio
+app.post('/api/servicios', async (req, res) => {
+  const { Nombre } = req.body;
+
+  if (!Nombre) {
+    return res.status(400).json({ success: false, message: 'Nombre es requerido' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute('INSERT INTO servicios (Nombre) VALUES (?)', [Nombre]);
+    res.json({ success: true, message: 'Servicio creado exitosamente' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Eliminar servicio
+app.delete('/api/servicios/:id', async (req, res) => {
+  const { id } = req.params;
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute('DELETE FROM servicios WHERE Id_Servicio = ?', [id]);
+    res.json({ success: true, message: 'Servicio eliminado' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Editar servicio
+app.put('/api/servicios/:id', async (req, res) => {
+  const { id } = req.params;
+  const { Nombre } = req.body;
+
+  if (!Nombre) {
+    return res.status(400).json({ success: false, message: 'Nombre es requerido' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    await connection.execute('UPDATE servicios SET Nombre = ? WHERE Id_Servicio = ?', [Nombre, id]);
+    res.json({ success: true, message: 'Servicio actualizado' });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.post('/api/solicitar-servicio', async (req, res) => {
+  const usuario = req.session.usuario;
+  const { servicios, fechaHora } = req.body;
+
+  if (!usuario) {
+    return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
+  }
+  if (!servicios || !fechaHora) {
+    return res.status(400).json({ success: false, message: 'Servicio y fecha son requeridos' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [serviciosRows] = await connection.execute(
+      'SELECT Id_Servicio FROM servicios WHERE Nombre = ?', [servicios]
+    );
+    if (serviciosRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Servicio no encontrado' });
+    }
+
+    await connection.execute(
+      'INSERT INTO solicitudes (Fecha, Id_Usuario, CodigoServicio) VALUES (?, ?, ?)',
+      [fechaHora, usuario.Id_Usuario, serviciosRows[0].Id_Servicio]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Solicitud registrada correctamente'
+    });
+
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.get('/api/mis-solicitudes', async (req, res) => {
+  const usuario = req.session.usuario;
+
+  if (!usuario) {
+    return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [solicitudes] = await connection.execute(
+      `SELECT s.Id_solicitudes, s.Fecha, sv.Nombre FROM solicitudes s
+             INNER JOIN servicios sv ON s.CodigoServicio = sv.Id_Servicio
+             WHERE s.Id_Usuario = ?`,
+      [usuario.Id_Usuario]
+    );
+
+    const data = solicitudes.map(s => ({
+      id: s.Id_solicitudes,
+      nombre: s.Nombre,
+      fecha: moment(s.Fecha).format('YYYY-MM-DD HH:mm:ss')
+    }));
+
+    res.json({ success: true, data });
+
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.delete('/api/solicitudes/:id', async (req, res) => {
+  const usuario = req.session.usuario;
+  const solicitudId = req.params.id;
+
+  if (!usuario) {
+    return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [verificacion] = await connection.execute(
+      'SELECT Id_solicitudes FROM solicitudes WHERE Id_solicitudes = ? AND Id_Usuario = ?',
+      [solicitudId, usuario.Id_Usuario]
+    );
+
+    if (verificacion.length === 0) {
+      return res.status(404).json({ success: false, message: 'Solicitud no encontrada o no pertenece al usuario' });
+    }
+
+    await connection.execute(
+      'DELETE FROM solicitudes WHERE Id_solicitudes = ?', [solicitudId]
+    );
+
+    res.json({ success: true, message: 'Solicitud eliminada exitosamente' });
+
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.post('/api/cerrar-sesion', (req, res) => {
+  req.session.destroy(err => {
+    if (err) {
+      console.error('Error al cerrar sesión:', err);
+      return res.status(500).json({ success: false, message: 'Error al cerrar sesión' });
+    }
+    res.json({ success: true, message: 'Sesión cerrada correctamente' });
+  });
+});
+
+app.listen(5000, () => { });
+
+
+
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import '../Css/Administrador.css'
+
+
+function Admin() {
+  const [mensaje, setMensaje] = useState('');
+  const [usuarios, setUsuarios] = useState([]);
+  const [usuario, setUsuario] = useState([]);
+  const [manzanas, setManzanas] = useState([]);
+  const [servicios, setServicios] = useState([]);
+  const [editandoId, setEditandoId] = useState(null);
+  const [usuarioEditado, setUsuarioEditado] = useState({});
+  const [editandoManzanaId, setEditandoManzanaId] = useState(null);
+  const [nuevaManzana, setNuevaManzana] = useState('');
+  const [manzanaEditada, setManzanaEditada] = useState('');
+  const [editandoServicioId, setEditandoServicioId] = useState(null);
+  const [nuevoServicio, setNuevoServicio] = useState('');
+  const [servicioEditado, setServicioEditado] = useState('');
+
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    fetch('http://localhost:5000/api/admin', {
+      method: 'GET',
+      credentials: 'include'
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setMensaje(data.message);
+          cargarUsuarios();
+          cargarManzanas();
+          cargarServicios();
+          verificarSesion();
+        } else {
+          navigate('/');
+        }
+      })
+      .catch((err) => {
+        console.error('Error:', err);
+        navigate('/');
+      });
+  }, [navigate]);
+  const verificarSesion = async () => {
+    try {
+      const res = await fetch(`http://localhost:5000/api/usuarios`, {
+        credentials: 'include'
+      });
+
+      const result = await res.json();
+      console.log(result)
+      if (result.success) {
+        setUsuario(result.data);
+        console.log(result)
+      } else {
+        alert('No hay sesión activa. Redirigiendo...');
+        window.location.href = '/Manzanas';
+      }
+
+
+    } catch (err) {
+      console.error('Error:', err);
+      alert('Error al verificar sesión');
+      window.location.href = '/Manzanas';
+    }
+
+  };
+  const cargarUsuarios = () => {
+    fetch('http://localhost:5000/api/todos-usuarios', {
+      method: 'GET',
+      credentials: 'include'
+    })
+      .then((res) => res.json())
+      .then((usuariosData) => {
+        if (usuariosData.success) {
+          setUsuarios(usuariosData.data);
+          console.log(usuariosData)
+        } else {
+          console.error('Error al cargar usuarios:', usuariosData.message);
+        }
+      });
+  };
+
+  const cargarManzanas = () => {
+    fetch('http://localhost:5000/api/manzanas', {
+      method: 'GET',
+      credentials: 'include'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setManzanas(data.data);
+        } else {
+          console.error('Error al cargar manzanas:', data.message);
+        }
+      })
+      .catch(err => console.error('Error al cargar manzanas:', err));
+  };
+
+  const cargarServicios = () => {
+    fetch('http://localhost:5000/api/servicios', {
+      method: 'GET',
+      credentials: 'include'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setServicios(data.data);
+        } else {
+          console.error('Error al cargar servicios:', data.message);
+        }
+      })
+      .catch(err => console.error('Error al cargar servicios:', err));
+  };
+
+  const eliminarUsuario = (id) => {
+    if (!window.confirm('¿Estás seguro de eliminar este usuario?')) return;
+    fetch(`http://localhost:5000/api/eliminar-usuario/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setUsuarios(prev => prev.filter(u => u.Id_Usuario !== id));
+        } else {
+          alert(data.message || 'No se pudo eliminar el usuario.');
+        }
+      });
+  };
+
+  const iniciarEdicion = (usuario) => {
+    setEditandoId(usuario.Id_Usuario);
+    setUsuarioEditado({
+      Id_Usuario: usuario.Id_Usuario,
+      Nombre: usuario.Nombre,
+      Documento: usuario.Documento,
+      Id_Manzana: usuario.Id_Manzana
+    });
+  };
+
+  const cancelarEdicion = () => {
+    setEditandoId(null);
+    setUsuarioEditado({});
+  };
+
+  const guardarEdicion = () => {
+    fetch(`http://localhost:5000/api/editar-usuario/${editandoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(usuarioEditado)
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          cargarUsuarios();
+          cancelarEdicion();
+        } else {
+          alert(data.message || 'No se pudo actualizar el usuario.');
+        }
+      });
+  };
+
+  const handleInputChange = (campo, valor) => {
+    setUsuarioEditado(prev => ({ ...prev, [campo]: valor }));
+  };
+
+  // MANZANAS
+
+  const crearManzana = () => {
+    if (!nuevaManzana.trim()) return alert('Escribe un nombre válido');
+
+    fetch('http://localhost:5000/api/manzanas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ Nombre: nuevaManzana.trim() })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setNuevaManzana('');
+          cargarManzanas();
+        } else {
+          alert('No se pudo crear la manzana.');
+        }
+      });
+  };
+
+  const eliminarManzana = (id) => {
+    if (!window.confirm('¿Eliminar esta manzana?')) return;
+
+    fetch(`http://localhost:5000/api/manzanas/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          cargarManzanas();
+        } else {
+          alert('No se pudo eliminar.');
+        }
+      });
+  };
+
+  const iniciarEdicionManzana = (id, nombre) => {
+    setEditandoManzanaId(id);
+    setManzanaEditada(nombre);
+  };
+
+  const cancelarEdicionManzana = () => {
+    setEditandoManzanaId(null);
+    setManzanaEditada('');
+  };
+
+  const guardarManzanaEditada = () => {
+    fetch(`http://localhost:5000/api/manzanas/${editandoManzanaId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ Nombre: manzanaEditada.trim() })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          cargarManzanas();
+          cancelarEdicionManzana();
+        } else {
+          alert('No se pudo editar la manzana.');
+        }
+      });
+  };
+
+  // SERVICIOS
+
+  const crearServicio = () => {
+    if (!nuevoServicio.trim()) return alert('Escribe un nombre válido');
+
+    fetch('http://localhost:5000/api/servicios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ Nombre: nuevoServicio.trim() })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setNuevoServicio('');
+          cargarServicios();
+        } else {
+          alert('No se pudo crear el servicio.');
+        }
+      });
+  };
+
+  const eliminarServicio = (id) => {
+    if (!window.confirm('¿Eliminar este servicio?')) return;
+
+    fetch(`http://localhost:5000/api/servicios/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          cargarServicios();
+        } else {
+          alert('No se pudo eliminar.');
+        }
+      });
+  };
+
+  const iniciarEdicionServicio = (id, nombre) => {
+    setEditandoServicioId(id);
+    setServicioEditado(nombre);
+  };
+
+  const cancelarEdicionServicio = () => {
+    setEditandoServicioId(null);
+    setServicioEditado('');
+  };
+
+  const guardarServicioEditado = () => {
+    fetch(`http://localhost:5000/api/servicios/${editandoServicioId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ Nombre: servicioEditado.trim() })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          cargarServicios();
+          cancelarEdicionServicio();
+        } else {
+          alert('No se pudo editar el servicio.');
+        }
+      });
+  };
+
+  return (
+    <div className="contenedorr">
+      <h2>¡Bienvenido {usuario?.Nombre}!</h2>
+      {usuario ? (
+        <div className='Bienve'>
+          <p><strong>Documento:</strong> {usuario.Documento}</p>
+        </div>
+      ) : (
+        <p className="loading"><strong>Cargando información...</strong></p>
+      )}
+
+      {/* TABLA DE USUARIOS */}
+      <h2>Usuarios registrados:</h2>
+      {usuarios.length === 0 ? (
+        <p>No hay usuarios registrados.</p>
+      ) : (
+        <table border="1" cellPadding="5">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre</th>
+              <th>Documento</th>
+              <th>Manzana</th>
+              <th>Funciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {usuarios.map((u) => (
+              <tr key={u.Id_Usuario}>
+                <td data-label="ID">{u.Id_Usuario}</td>
+                <td data-label="Nombre">
+                  {editandoId === u.Id_Usuario ? (
+                    <input
+                      type="text"
+                      value={usuarioEditado.Nombre}
+                      onChange={(e) => handleInputChange('Nombre', e.target.value)}
+                    />
+                  ) : u.Nombre}
+                </td>
+                <td data-label="Documento">
+                  {editandoId === u.Id_Usuario ? (
+                    <input
+                      type="text"
+                      value={usuarioEditado.Documento}
+                      onChange={(e) => handleInputChange('Documento', e.target.value)}
+                    />
+                  ) : u.Documento}
+                </td>
+                <td data-label="Manzana">
+                  {editandoId === u.Id_Usuario ? (
+                    <select
+                      value={usuarioEditado.Id_Manzana}
+                      onChange={(e) => handleInputChange('Id_Manzana', e.target.value)}
+                    >
+                      <option value="">Selecciona una manzana</option>
+                      {manzanas.map((m) => (
+                        <option key={m.Id_Manzana} value={m.Id_Manzana}>
+                          {m.Nombre}
+                        </option>
+                      ))}
+                    </select>
+                  ) : u.Nombre_Manzana || 'Sin asignar'}
+                </td>
+                <td data-label="Funciones">
+                  {editandoId === u.Id_Usuario ? (
+                    <div className='cambi'>
+                      <button onClick={guardarEdicion}>Guardar</button>
+                      <button onClick={cancelarEdicion}>Cancelar</button>
+                    </div>
+                  ) : (
+                    <div className='cam'>
+                      <button onClick={() => iniciarEdicion(u)}>Editar</button>
+                      <button onClick={() => eliminarUsuario(u.Id_Usuario)}>Eliminar</button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* TABLA DE MANZANAS */}
+      <h2>Manzanas disponibles:</h2>
+      <input
+        type="text"
+        placeholder="Nombre de nueva manzana"
+        value={nuevaManzana}
+        onChange={(e) => setNuevaManzana(e.target.value)}
+      />
+      <button onClick={crearManzana}>Agregar</button>
+
+      {manzanas.length === 0 ? (
+        <p>No hay manzanas registradas.</p>
+      ) : (
+        <table border="1" cellPadding="5">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre</th>
+              <th>Funciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {manzanas.map((m) => (
+              <tr key={m.Id_Manzana}>
+                <td data-label="ID">{m.Id_Manzana}</td>
+                <td data-label="Nombre">
+                  {editandoManzanaId === m.Id_Manzana ? (
+                    <input
+                      type="text"
+                      value={manzanaEditada}
+                      onChange={(e) => setManzanaEditada(e.target.value)}
+                    />
+                  ) : (
+                    m.Nombre
+                  )}
+                </td>
+                <td data-label="Funciones">
+                  {editandoManzanaId === m.Id_Manzana ? (
+                    <div className='pera'>
+                      <button onClick={guardarManzanaEditada}>Guardar</button>
+                      <button onClick={cancelarEdicionManzana}>Cancelar</button>
+                    </div>
+                  ) : (
+                    <div className='pero'>
+                      <button onClick={() => iniciarEdicionManzana(m.Id_Manzana, m.Nombre)}>Editar</button>
+                      <button onClick={() => eliminarManzana(m.Id_Manzana)}>Eliminar</button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* TABLA DE SERVICIOS */}
+      <h2>Servicios disponibles:</h2>
+      <input
+        type="text"
+        placeholder="Nombre de nuevo servicio"
+        value={nuevoServicio}
+        onChange={(e) => setNuevoServicio(e.target.value)}
+      />
+      <button onClick={crearServicio}>Agregar</button>
+
+      {servicios.length === 0 ? (
+        <p>No hay servicios registrados.</p>
+      ) : (
+        <table border="1" cellPadding="5">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre</th>
+              <th>Funciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {servicios.map((s) => (
+              <tr key={s.Id_Servicio}>
+                <td data-label="ID">{s.Id_Servicio}</td>
+                <td data-label="Nombre">
+                  {editandoServicioId === s.Id_Servicio ? (
+                    <input
+                      type="text"
+                      value={servicioEditado}
+                      onChange={(e) => setServicioEditado(e.target.value)}
+                    />
+                  ) : (
+                    s.Nombre
+                  )}
+                </td>
+                <td data-label="Funciones">
+                  {editandoServicioId === s.Id_Servicio ? (
+                    <div className='mora'>
+                      <button onClick={guardarServicioEditado}>Guardar</button>
+                      <button onClick={cancelarEdicionServicio}>Cancelar</button>
+                    </div>
+                  ) : (
+                    <div className='mero'>
+                      <button onClick={() => iniciarEdicionServicio(s.Id_Servicio, s.Nombre)}>Editar</button>
+                      <button onClick={() => eliminarServicio(s.Id_Servicio)}>Eliminar</button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+
+}
+
+export default Admin;
