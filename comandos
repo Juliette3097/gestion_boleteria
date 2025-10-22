@@ -1,0 +1,87 @@
+
+si aún no tienes tu carpeta del backend, crea una:
+
+mkdir backend
+cd backend
+
+🔧 Crear el package.json
+
+Ejecuta:
+
+npm init -y
+
+
+Esto genera automáticamente un archivo básico llamado package.json con configuración por defecto.
+
+💡 Instalar dependencias comunes del backend
+
+Ejemplo típico:
+
+npm install express mysql2 cors body-parser express-session
+
+
+Opcionalmente si usarás nodemon (para reiniciar el servidor automáticamente):
+
+npm install --save-dev nodemon
+
+
+Luego puedes editar el package.json y agregar el script:
+
+"scripts": {
+  "start": "node index.js",
+  "dev": "nodemon index.js"
+}
+
+
+Así puedes ejecutar tu servidor con:
+
+npm run dev
+
+🟦 2️⃣ En el frontend (React)
+
+📍 En una carpeta aparte, crea el proyecto React:
+
+npx create-react-app frontend
+
+
+Esto automáticamente crea el package.json del frontend con todas las dependencias necesarias (React, ReactDOM, scripts, etc).
+
+Si prefieres hacerlo manualmente (más avanzado), puedes hacerlo así:
+
+mkdir frontend
+cd frontend
+npm init -y
+npm install react react-dom react-scripts
+
+
+Y luego en el package.json agregas:
+
+"scripts": {
+  "start": "react-scripts start",
+  "build": "react-scripts build"
+}
+
+🟦 2️⃣ En el frontend (React)
+
+En React no se usa npm init, sino que se crea un proyecto completo con este comando:
+
+npx create-react-app frontend
+
+
+Ese comando:
+
+Crea una carpeta frontend/
+
+Genera automáticamente el package.json
+
+Instala React, ReactDOM, scripts de desarrollo y configuración de webpack, Babel, etc.
+
+Configura todo lo necesario para que empieces a programar de inmediato.
+
+Luego puedes iniciar tu servidor de desarrollo con:
+
+cd frontend
+npm start
+
+
+Esto abrirá React en tu navegador en http://localhost:3000.
