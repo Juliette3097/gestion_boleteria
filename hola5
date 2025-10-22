@@ -1,0 +1,221 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+const mysql = require('mysql2/promise');
+const app = express();
+const session = require('express-session');
+const cors = require('cors');
+
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true
+}));
+
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(session({
+  secret: 'clave-ultra-secretaa',
+  resave: false,
+  saveUninitialized: true,
+  cookie: {
+    secure: false, 
+    sameSite: 'lax'
+  }
+}));
+
+// Configuración base de datos
+const db = {
+  host: 'localhost',
+  user: 'root',
+  password: '',
+  database: 'gestion_eventos'
+};
+
+const handleDbError = (error, res) => {
+  console.error('Error de base de datos:', error);
+  res.status(500).json({
+    success: false,
+    message: 'Error interno del servidor'
+  });
+};
+
+// Obtener todos los eventos
+app.get('/api/todos-eventos', async (req, res) => {
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [eventos] = await connection.execute('SELECT * FROM eventos');
+    res.json({ success: true, data: eventos });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Obtener todos los artistas
+app.get('/api/todos-artistas', async (req, res) => {
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [artistas] = await connection.execute('SELECT * FROM artistas');
+    res.json({ success: true, data: artistas });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+// Obtener todas las localidades
+app.get('/api/todas-localidades', async (req, res) => {
+  let connection;
+  try {
+    connection = await mysql.createConnection(db);
+    const [localidades] = await connection.execute('SELECT * FROM localidades');
+    res.json({ success: true, data: localidades });
+  } catch (error) {
+    handleDbError(error, res);
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
+app.listen(5000, () => {
+  console.log('✅ Servidor corriendo en http://localhost:5000');
+});
+
+
+
+import React, { useEffect, useState } from 'react';
+import SideBar from '../Componentes/SideBar';
+import { useNavigate } from 'react-router-dom';
+import '../Css/Usuario.css';
+
+function Usuario() {
+  const [eventos, setEventos] = useState([]);
+  const [localidades, setLocalidades] = useState([]);
+  const [artistas, setArtistas] = useState([]);
+  const navigate = useNavigate();
+
+  const cargarEventos = () => {
+    fetch('http://localhost:5000/api/todos-eventos')
+      .then(res => res.json())
+      .then(data => data.success ? setEventos(data.data) : console.error('Error eventos:', data.message))
+      .catch(err => console.error(err));
+  };
+
+  const cargarLocalidades = () => {
+    fetch('http://localhost:5000/api/todas-localidades')
+      .then(res => res.json())
+      .then(data => data.success ? setLocalidades(data.data) : console.error('Error localidades:', data.message))
+      .catch(err => console.error(err));
+  };
+
+  const cargarArtistas = () => {
+    fetch('http://localhost:5000/api/todos-artistas')
+      .then(res => res.json())
+      .then(data => data.success ? setArtistas(data.data) : console.error('Error artistas:', data.message))
+      .catch(err => console.error(err));
+  };
+
+  useEffect(() => {
+    cargarEventos();
+    cargarLocalidades();
+    cargarArtistas();
+  }, []);
+
+  return (
+    <>
+      <SideBar />
+      <h2 className="titulo1">Registro Eventos</h2>
+
+      {/* Tabla de eventos */}
+      <table className="tabla_eventos" border="1" cellPadding="5">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Nombre</th>
+            <th>Descripción</th>
+            <th>Fecha de inicio</th>
+            <th>Hora de inicio</th>
+            <th>Fecha de fin</th>
+            <th>Hora de fin</th>
+          </tr>
+        </thead>
+        <tbody>
+          {eventos.length > 0 ? (
+            eventos.map(e => (
+              <tr key={e.Id_Eventos}>
+                <td>{e.Id_Eventos}</td>
+                <td>{e.Nombre}</td>
+                <td>{e.Descripcion}</td>
+                <td>{e.Fecha_inicio}</td>
+                <td>{e.Hora_inicio}</td>
+                <td>{e.Fecha_fin}</td>
+                <td>{e.Hora_fin}</td>
+              </tr>
+            ))
+          ) : (
+            <tr><td colSpan="7">No hay eventos</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* Tabla de localidades */}
+      <h2 className="text-local">Localidades</h2>
+      <table className="tabla_localidad" border="1" cellPadding="5">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Tipo</th>
+            <th>Valor</th>
+            <th>Evento asociado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {localidades.length > 0 ? (
+            localidades.map(l => (
+              <tr key={l.Id_Localidades}>
+                <td>{l.Id_Localidades}</td>
+                <td>{l.Tipo_localidad}</td>
+                <td>{l.Valor_localidad}</td>
+                <td>{l.eventosId_Eventos}</td>
+              </tr>
+            ))
+          ) : (
+            <tr><td colSpan="4">No hay localidades</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* Tabla de artistas */}
+      <h2 className="text-local">Artistas</h2>
+      <table className="tabla_artista" border="1" cellPadding="5">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Nombre</th>
+            <th>Género musical</th>
+            <th>Ciudad origen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {artistas.length > 0 ? (
+            artistas.map(a => (
+              <tr key={a.Id_Artistas}>
+                <td>{a.Id_Artistas}</td>
+                <td>{a.Nombre}</td>
+                <td>{a.Genero_musical}</td>
+                <td>{a.Ciudad_origen}</td>
+              </tr>
+            ))
+          ) : (
+            <tr><td colSpan="4">No hay artistas</td></tr>
+          )}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+export default Usuario;
